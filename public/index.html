@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PostgreSQL Query Viewer</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar: Tables List -->
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <div class="db-badge">
+          <span class="status-dot"></span>
+          <span id="activeDbName" class="db-title" title="Active Database">Default DB</span>
+        </div>
+        <div class="header-actions">
+          <button id="openDbModalBtn" title="Switch or Add Database" class="btn-icon">⚡</button>
+          <button id="refreshTablesBtn" title="Refresh Tables" class="btn-icon">↻</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section-title">TABLES (<span id="tableCount">0</span>)</div>
+      <ul id="tablesList" class="tables-list">
+        <li class="loading-item">Loading tables...</li>
+      </ul>
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="main-content">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="app-info">
+          <h2>Query Viewer</h2>
+          <span class="db-tag">Render Cloud DB</span>
+        </div>
+        <div class="topbar-actions">
+          <span class="keyboard-tip">Press <kbd>Ctrl</kbd> + <kbd>Enter</kbd> or double-click box to execute</span>
+          <button id="executeBtn" class="btn-primary">
+            <span class="play-icon">▶</span> Execute
+          </button>
+        </div>
+      </header>
+
+      <!-- AI Query Assistant -->
+      <section class="ai-assistant-bar">
+        <div class="ai-input-wrapper">
+          <span class="ai-icon">✨</span>
+          <input type="text" id="aiPromptInput" placeholder="Ask AI to write query (e.g. 'Show active editors with rating > 4.5' or 'Count orders by status')" />
+          <button id="aiAskBtn" class="btn-ai">Generate SQL</button>
+        </div>
+      </section>
+
+      <!-- SQL Editor Area -->
+      <section class="editor-section">
+        <div class="editor-header">
+          <span>SQL Query</span>
+          <button id="clearBtn" class="btn-subtle">Clear</button>
+        </div>
+        <textarea id="sqlInput" spellcheck="false" placeholder="-- Write your PostgreSQL query here...&#10;SELECT * FROM users LIMIT 10;"></textarea>
+      </section>
+
+      <!-- Status Bar -->
+      <section class="stats-bar">
+        <div class="stat-group">
+          <span id="statusBadge" class="badge">Ready</span>
+          <span id="rowCount" class="stat-text">0 rows</span>
+          <span id="execTime" class="stat-text">0 ms</span>
+        </div>
+      </section>
+
+      <!-- Query Results Area -->
+      <section class="results-section">
+        <!-- Error Container -->
+        <div id="errorBox" class="error-container hidden">
+          <div class="error-title">Query Error</div>
+          <pre id="errorText" class="error-message"></pre>
+        </div>
+
+        <!-- Table Output Container -->
+        <div id="tableWrapper" class="table-wrapper">
+          <div id="emptyState" class="empty-state">
+            <p>Run a query or click a table from the sidebar to view data.</p>
+          </div>
+          <table id="resultsTable" class="results-table hidden">
+            <thead id="tableHead"></thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Database Switcher Modal -->
+  <div id="dbModal" class="modal-backdrop hidden">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h3>Connect Database</h3>
+        <button id="closeDbModalBtn" class="btn-icon">✕</button>
+      </div>
+      <div class="modal-body">
+        <form id="dbForm">
+          <div class="form-group">
+            <label for="newDbName">Display Name</label>
+            <input type="text" id="newDbName" placeholder="e.g. Render Staging or Localhost" required />
+          </div>
+          <div class="form-group">
+            <label for="newDbUri">PostgreSQL Connection String</label>
+            <input type="text" id="newDbUri" placeholder="postgresql://user:pass@host:5432/dbname" required />
+            <small class="form-hint">Supports direct PostgreSQL URIs with user, password, host, port & database</small>
+          </div>
+          <button type="submit" id="saveDbBtn" class="btn-primary full-width">Connect & Save</button>
+        </form>
+
+        <div class="saved-dbs-section">
+          <div class="modal-section-title">Saved Connections</div>
+          <ul id="savedDbList" class="saved-db-list"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>

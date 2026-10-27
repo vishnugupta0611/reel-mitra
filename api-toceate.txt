@@ -1,0 +1,258 @@
+1. Authentication APIs (User + Editor)
+Client aur editor dono same authentication APIs use karenge. Registration ke waqt role select hoga.
+Method	API	Purpose
+POST	/api/v1/auth/register	New account create karna
+POST	/api/v1/auth/login	Login
+POST	/api/v1/auth/logout	Logout
+GET	/api/v1/auth/me	Logged-in user ki details
+POST	/api/v1/auth/refresh	Access token refresh karna, agar refresh tokens use ho rahe hain
+POST	/api/v1/auth/verify-email	Email verify karna
+POST	/api/v1/auth/resend-verification	Verification email dobara bhejna
+POST	/api/v1/auth/forgot-password	Password reset request
+POST	/api/v1/auth/reset-password	Naya password set karna
+PATCH	/api/v1/auth/change-password	Logged-in user ka password change karna
+
+
+Registration example:
+{
+  "name": "Vishnu Gupta",
+  "email": "vishnu@example.com",
+  "password": "StrongPassword123",
+  "role": "client"
+}
+
+Editor registration mein "role": "editor" hoga.
+
+Important: Public registration mein user ko admin role choose karne ki permission nahi honi chahiye.
+2. Common User APIs (Client + Editor)
+Dono roles ki basic account-management APIs same rahengi.
+Method	API	Purpose
+GET	/api/v1/users/me	Apni profile dekhna
+PATCH	/api/v1/users/me	Name, profile picture, phone jaise details update karna
+PATCH	/api/v1/users/me/email	Email change karna, verification ke saath
+PATCH	/api/v1/users/me/phone	Phone number update karna
+DELETE	/api/v1/users/me	Apna account delete karne ki request
+GET	/api/v1/users/me/settings	Account preferences dekhna
+PATCH	/api/v1/users/me/settings	Preferences update karna
+
+
+Account deletion
+DELETE /api/v1/users/me se logged-in user apna account delete karne ki request kar sakega.
+
+Backend ko authentication, confirmation aur applicable data-retention requirements handle karni hongi. Agar account permanently delete karne ke bajaye deactivate karna hai, toh uska behaviour clearly define karna.
+
+Note: GET /auth/me aur GET /users/me ka purpose duplicate ho sakta hai. Simplicity ke liye ek canonical endpoint rakh sakte ho, jaise GET /users/me.
+3. Public Editor APIs (Without Login)
+Ye APIs website par editors ko discover karne ke liye hongi. Client bina login kiye editors browse kar sakega, agar tum public browsing allow karna chahte ho.
+Method	API	Purpose
+GET	/api/v1/editors	Saare publicly visible editors ki list
+GET	/api/v1/editors/{editor_id}	Kisi specific editor ki public profile
+GET	/api/v1/editors/{editor_id}/portfolio	Editor ka portfolio dekhna
+GET	/api/v1/editors/{editor_id}/reviews	Editor ki reviews aur ratings
+GET	/api/v1/categories	Available editing categories
+GET	/api/v1/categories/{category_id}	Specific category ki details
+GET	/api/v1/categories/{category_id}/editors	Category ke editors ki list
+
+
+Editor search and filters
+Alag-alag endpoint banane ki zaroorat nahi hai. Ek hi GET /api/v1/editors endpoint query parameters se search, filter aur sorting handle kar sakta hai.
+
+Examples:
+GET /api/v1/editors
+
+GET /api/v1/editors?search=video
+
+GET /api/v1/editors?category_id=2
+
+GET /api/v1/editors?min_rating=4
+
+GET /api/v1/editors?min_price=500&max_price=5000
+
+GET /api/v1/editors?category_id=2&min_rating=4&sort_by=rating
+
+Recommended filters:
+Query parameter	Purpose
+search	Editor name ya relevant keywords se search
+category_id	Editing category ke according filter
+min_rating	Minimum rating
+min_price	Minimum listed price
+max_price	Maximum listed price
+experience	Experience ke according filter
+available	Availability ke according filter
+sort_by	Rating, price, experience ya newest ke according sorting
+page	Current page
+limit	Ek page mein kitne editors
+order	asc ya desc
+
+
+Example response:
+{
+  "items": [
+    {
+      "id": 12,
+      "name": "Rahul Sharma",
+      "profile_image": "https://example.com/profile.jpg",
+      "bio": "Professional video editor",
+      "categories": ["Video Editing", "Reels Editing"],
+      "experience_years": 3,
+      "rating": 4.8,
+      "starting_price": 1000
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 12,
+    "total": 45,
+    "total_pages": 4
+  }
+}
+
+Ye example response format hai. Actual fields tumhare database schema ke according honge.
+4. Editor-Specific APIs
+Ye APIs sirf logged-in editor access kar sakega.
+A. Editor profile management
+Method	API	Purpose
+POST	/api/v1/editor/onboarding	Editor profile create/setup karna
+GET	/api/v1/editor/profile	Apni editor profile dekhna
+PATCH	/api/v1/editor/profile	Bio, experience, pricing aur doosri details update karna
+GET	/api/v1/editor/profile/completion	Profile completion status dekhna
+PATCH	/api/v1/editor/availability	Availability update karna
+
+
+Editor ki public profile mein fields ho sakti hain:
+- Display name aur profile picture
+- Bio/about
+- Experience
+- Editing categories
+- Starting price ya pricing details
+- Skills/software expertise
+- Availability
+- Portfolio
+- Rating aur reviews
+Public profile aur private account details ko alag rakhna. Editor ka email ya phone number bina permission ke public response mein expose nahi hona chahiye.
+B. Editor categories management
+Editor apni editing categories select aur manage kar sakega.
+Method	API	Purpose
+GET	/api/v1/editor/categories	Editor ki selected categories
+PUT	/api/v1/editor/categories	Selected categories ko replace/update karna
+GET	/api/v1/categories	Available categories dekhna
+
+
+Example:
+PUT /api/v1/editor/categories
+
+{
+  "category_ids": [1, 2, 5]
+}
+
+Categories backend mein centrally manage hongi. Editor sirf existing, active categories select kar sakega.
+C. Editor portfolio management
+Ye important part hai, kyunki editor ko apna previous work upload karna aur portfolio manage karna hoga.
+Method	API	Purpose
+POST	/api/v1/editor/portfolio	Portfolio item create karna aur work add karna
+GET	/api/v1/editor/portfolio	Apna portfolio dekhna
+GET	/api/v1/editor/portfolio/{item_id}	Specific portfolio item dekhna
+PATCH	/api/v1/editor/portfolio/{item_id}	Portfolio item ki details edit karna
+DELETE	/api/v1/editor/portfolio/{item_id}	Portfolio item delete karna
+PATCH	/api/v1/editor/portfolio/reorder	Portfolio items ka display order change karna
+
+
+Portfolio item mein ye details ho sakti hain:
+- Work title
+- Description
+- Category
+- Thumbnail
+- Video ya image URL
+- External video URL, agar supported ho
+- Skills/tags
+- Display order
+Example request:
+{
+  "title": "Instagram Reel Editing",
+  "description": "Cinematic transitions and color grading",
+  "category_id": 2,
+  "media_url": "https://storage.example.com/reel.mp4",
+  "thumbnail_url": "https://storage.example.com/thumbnail.jpg",
+  "tags": ["Reels", "Color Grading", "Transitions"]
+}
+
+Portfolio file upload kaise hoga?
+Actual video/image ko directly database mein store karne ke bajaye object storage use karna better rahega.
+
+Agar direct-to-storage uploads implement karte ho, toh ye additional APIs useful hongi:
+Method	API	Purpose
+POST	/api/v1/uploads/initiate	File upload initiate karna aur signed upload URL lena
+POST	/api/v1/uploads/{upload_id}/complete	Upload complete hone ki confirmation aur validation
+GET	/api/v1/uploads/{upload_id}	Upload status check karna, agar required ho
+
+
+Typical flow:
+1. Editor Upload Your Work par click karega.
+2. Frontend upload initiate API call karega.
+3. Backend authorized upload URL generate karega.
+4. Frontend file ko storage par upload karega.
+5. Upload complete hone ke baad backend file metadata verify karega.
+6. Portfolio API se title, description, category aur media reference save hoga.
+Agar tum Cloudinary ya kisi similar service ka upload flow use karte ho, toh API design uske according simplify kiya ja sakta hai.
+D. Editor ke portfolio ki public APIs
+Editor ka portfolio manage karne aur public portfolio dekhne ke endpoints alag access rules follow karenge.
+Editor (authenticated)	Public
+GET /api/v1/editor/portfolio	GET /api/v1/editors/{editor_id}/portfolio
+POST /api/v1/editor/portfolio	Public portfolio item add nahi kar sakta
+PATCH /api/v1/editor/portfolio/{item_id}	Public portfolio item edit nahi kar sakta
+DELETE /api/v1/editor/portfolio/{item_id}	Public portfolio item delete nahi kar sakta
+
+
+Public endpoint sirf published/visible portfolio items return karega.
+Final API Structure
+Tumhare current scope mein backend ko is tarah organize kar sakte ho:
+/api/v1
+│
+├── auth
+│   ├── register
+│   ├── login
+│   ├── logout
+│   ├── me
+│   ├── refresh
+│   ├── verify-email
+│   ├── forgot-password
+│   └── reset-password
+│
+├── users
+│   └── me
+│       ├── profile
+│       ├── settings
+│       ├── email
+│       └── phone
+│
+├── categories
+│   ├── GET /
+│   ├── GET /{category_id}
+│   └── GET /{category_id}/editors
+│
+├── editors
+│   ├── GET /
+│   ├── GET /{editor_id}
+│   ├── GET /{editor_id}/portfolio
+│   └── GET /{editor_id}/reviews
+│
+├── editor
+│   ├── onboarding
+│   ├── profile
+│   ├── profile/completion
+│   ├── availability
+│   ├── categories
+│   └── portfolio
+│       ├── GET /
+│       ├── POST /
+│       ├── GET /{item_id}
+│       ├── PATCH /{item_id}
+│       ├── DELETE /{item_id}
+│       └── PATCH /reorder
+│
+└── uploads
+    ├── POST /initiate
+    ├── POST /{upload_id}/complete
+    └── GET /{upload_id}
+
+Meri recommendation: Pehle Authentication, Common User Profile, Editor Profile, Categories, Public Editor Search/Filters aur Portfolio CRUD implement karo. Ye foundation ready ho jayega. Project creation, chat aur payment ko abhi scope se bahar rakho.
