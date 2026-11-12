@@ -25,8 +25,12 @@ BASE_URL = http://localhost:5000/api/v1
 5. [Editor Profile APIs (`/editor`)](#5-editor-profile-apis)
 6. [Editor Categories (`/editor/categories`)](#6-editor-categories-apis)
 7. [Editor Portfolio APIs (`/editor/portfolio`)](#7-editor-portfolio-apis)
-8. [Uploads & Media APIs (`/uploads`)](#8-uploads--media-apis)
-9. [Database Query Viewer APIs (`/api`)](#9-database-query-viewer-apis)
+8. [Uploads & Cloudinary Media APIs (`/uploads`)](#8-uploads--cloudinary-media-apis)
+9. [Orders, Deliverables & Reviews APIs (`/orders`)](#9-orders-deliverables--reviews-apis)
+10. [Razorpay Payments APIs (`/payments`)](#10-razorpay-payments-apis)
+11. [Editor Wallet, Payout Accounts & RazorpayX Withdrawals (`/editor/earnings`, `/editor/payout-accounts`, `/payouts`)](#11-editor-wallet-payout-accounts--razorpayx-withdrawals)
+12. [Client–Editor Messaging APIs (`/conversations`)](#12-clienteditor-messaging-apis)
+13. [Database Query Viewer APIs (`/api`)](#13-database-query-viewer-apis)
 
 ---
 
@@ -853,37 +857,62 @@ Requires: `Authorization: Bearer {{TOKEN}}` (`editor` role)
 
 ---
 
-## 8. Uploads & Media APIs
+## 8. Uploads & Cloudinary Media APIs
 
 Prefix: `{{BASE_URL}}/uploads`
 Requires: `Authorization: Bearer {{TOKEN}}`
 
-### 8.1 Initiate File Upload
+### 8.1 Initiate Signed Cloudinary Upload
 * **Method:** `POST /uploads/initiate`
-* **Description:** Registers upload metadata and provides an authorized direct upload URL.
+* **Description:** Creates a `media_files` row and returns Cloudinary signed upload parameters for direct browser/mobile uploads (large videos/images).
 * **Body:**
   ```json
   {
     "file_name": "raw_footage_4k.mp4",
     "mime_type": "video/mp4",
     "size_bytes": 104857600,
-    "media_type": "video"
+    "folder": "orders",
+    "order_id": "optional-order-uuid"
   }
   ```
 * **Response (201):**
   ```json
   {
-    "message": "Upload initiated successfully",
+    "message": "Cloudinary upload initiated",
     "upload_id": "media-file-uuid",
-    "storage_key": "uploads/user-id/17300000_raw_footage_4k.mp4",
-    "upload_url": "https://storage.reelmitra.com/direct/media-file-uuid",
-    "expires_in": 3600
+    "storage_key": "reelmitra/orders/user-id/17300000_raw_footage_4k",
+    "upload_url": "https://api.cloudinary.com/v1_1/<cloud_name>/video/upload",
+    "resource_type": "video",
+    "cloudinary": {
+      "timestamp": 1730000000,
+      "signature": "...",
+      "folder": "reelmitra/orders/user-id",
+      "public_id": "17300000_raw_footage_4k",
+      "api_key": "...",
+      "cloud_name": "..."
+    }
   }
   ```
 
 ---
 
-### 8.2 Get Upload Status
+### 8.2 Direct Server Upload (Multipart)
+* **Method:** `POST /uploads/file`
+* **Content-Type:** `multipart/form-data`
+* **Fields:** `file` (max 100 MB), `folder` (`avatars` | `portfolio` | `orders` | `deliverables` | `chat` | `general`), `order_id` *(optional)*
+* **Response (201):**
+  ```json
+  {
+    "message": "File uploaded to Cloudinary successfully",
+    "url": "https://res.cloudinary.com/.../image/upload/.../avatar.jpg",
+    "public_id": "reelmitra/avatars/user-id/...",
+    "media_file": { "id": "media-file-uuid", "upload_status": "uploaded" }
+  }
+  ```
+
+---
+
+### 8.3 Get Upload Status
 * **Method:** `GET /uploads/:upload_id`
 * **Response (200):**
   ```json
@@ -891,33 +920,264 @@ Requires: `Authorization: Bearer {{TOKEN}}`
     "upload_id": "media-file-uuid",
     "status": "pending",
     "file_name": "raw_footage_4k.mp4",
+    "file_url": null,
     "size_bytes": 104857600
   }
   ```
 
 ---
 
-### 8.3 Complete & Verify Upload
+### 8.4 Complete Direct Cloudinary Upload
 * **Method:** `POST /uploads/:upload_id/complete`
-* **Description:** Called after frontend completes sending file bytes to storage.
-* **Response (200):**
+* **Description:** Stores the returned Cloudinary `secure_url` and marks upload as `uploaded`.
+* **Body:**
   ```json
   {
-    "message": "Upload marked as completed",
-    "media_file": {
-      "id": "media-file-uuid",
-      "upload_status": "uploaded"
-    }
+    "secure_url": "https://res.cloudinary.com/.../video/upload/v1/raw_footage_4k.mp4",
+    "public_id": "reelmitra/orders/user-id/17300000_raw_footage_4k",
+    "size_bytes": 104857600
   }
   ```
 
 ---
 
-## 9. Database Query Viewer APIs
+### 8.5 Delete Media File
+* **Method:** `DELETE /uploads/:upload_id`
+* **Description:** Deletes the Cloudinary asset and database record (owner/admin only).
+
+---
+
+## 9. Orders, Deliverables & Reviews APIs
+
+Prefix: `{{BASE_URL}}/orders`
+Requires: `Authorization: Bearer {{TOKEN}}`
+
+### 9.1 Create Order (Pre-Saves 20% Commission Split)
+* **Method:** `POST /orders`
+* **Body:**
+  ```json
+  {
+    "editor_id": "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
+    "category_id": "22222222-2222-2222-2222-222222222222",
+    "title": "Instagram Reels Edit",
+    "brief": "High retention vertical video with captions and SFX",
+    "requested_deadline": "2026-11-20T12:00:00.000Z",
+    "amount": 2500,
+    "currency": "INR",
+    "revision_limit": 2
+  }
+  ```
+* **Response (201):** Returns created `order` with saved `amount` (`2500.00`), `commission_percent` (`20.00`), `platform_fee` (`500.00`), `editor_amount` (`2000.00`), `status` (`"pending"`).
+
+---
+
+### 9.2 List My Orders
+* **Method:** `GET /orders`
+* **Query Params:** `status` *(optional)*
+
+---
+
+### 9.3 Get Order Details
+* **Method:** `GET /orders/:id`
+* **Description:** Returns `order`, `timeline`, `deliverables`, `payments`, and `earning` (order client/editor/admin only).
+
+---
+
+### 9.4 Editor Accept Order
+* **Method:** `PATCH /orders/:id/accept`
+
+---
+
+### 9.5 Cancel Order
+* **Method:** `PATCH /orders/:id/cancel`
+
+---
+
+### 9.6 Editor Submit Deliverable
+* **Method:** `POST /orders/:id/deliverables`
+* **Body:** `{ "media_file_id": "uuid", "deliverable_type": "preview" }` or `{ "media_url": "https://res.cloudinary.com/...", "file_name": "final.mp4", "deliverable_type": "final" }` (`preview` | `revision` | `final`)
+
+---
+
+### 9.7 Client Request Revision
+* **Method:** `PATCH /orders/:id/request-revision`
+* **Body:** `{ "note": "Make intro hook faster" }`
+
+---
+
+### 9.8 Client Complete Order
+* **Method:** `PATCH /orders/:id/complete`
+* **Description:** Marks paid order as `completed` and unlocks `editor_earnings.status` from `'pending'` to `'available'`.
+
+---
+
+### 9.9 Client Submit Review
+* **Method:** `POST /orders/:id/review`
+* **Body:** `{ "rating": 4.5, "comment": "Clean edit and timely delivery" }`
+
+---
+
+## 10. Razorpay Payments APIs
+
+Prefix: `{{BASE_URL}}/payments`
+
+### 10.1 Create Razorpay Order
+* **Method:** `POST /payments/create-order`
+* **Access:** Protected (`Bearer {{TOKEN}}`, order's client)
+* **Body:** `{ "order_id": "order-uuid" }`
+* **Description:** Reads `orders.amount` from DB, creates a Razorpay Order, and stores a `payments` record (`status: "created"`).
+
+---
+
+### 10.2 Verify Payment Signature
+* **Method:** `POST /payments/verify`
+* **Access:** Protected (`Bearer {{TOKEN}}`, order's client)
+* **Body:**
+  ```json
+  {
+    "razorpay_order_id": "order_RzpId...",
+    "razorpay_payment_id": "pay_RzpId...",
+    "razorpay_signature": "hmac_sha256_hex"
+  }
+  ```
+* **Description:** Verifies HMAC-SHA256 signature and confirms payment status via Razorpay API; marks payment `captured`, sets `orders.status = 'in_progress'`, and records `editor_earnings` (`status: 'pending'`).
+
+---
+
+### 10.3 Razorpay / RazorpayX Webhook
+* **Method:** `POST /payments/webhook` *(or `POST /payouts/webhook`)*
+* **Access:** Public (verified via `x-razorpay-signature` header against raw JSON body using `RAZORPAY_WEBHOOK_SECRET` or `RAZORPAYX_WEBHOOK_SECRET`)
+* **Events Handled:**
+  * Payment Gateway: `payment.captured`, `payment.failed`, `refund.processed`, `payment.refunded`
+  * RazorpayX Payouts: `payout.queued`, `payout.pending`, `payout.processing`, `payout.processed`, `payout.failed`, `payout.reversed`, `payout.rejected`
+  * RazorpayX Validations: `fund_account.validation.completed`, `fund_account.validation.failed`
+
+---
+
+## 11. Editor Wallet, Payout Accounts & RazorpayX Withdrawals
+
+Requires: `Authorization: Bearer {{TOKEN}}` (`editor` role)
+
+### 11.1 View Editor Wallet & Earnings Ledger
+* **Method:** `GET /editor/earnings` *(alias: `GET /editor/wallet`)*
+* **Response (200):**
+  ```json
+  {
+    "summary": {
+      "total_earned": "2000.00",
+      "pending_amount": "0.00",
+      "available_balance": "1500.00",
+      "reserved_amount": "500.00",
+      "withdrawn_amount": "0.00",
+      "minimum_withdrawal_amount": "100.00"
+    },
+    "items": [ ... ]
+  }
+  ```
+
+---
+
+### 11.2 Setup Editor Payout Account (Bank Account or UPI VPA)
+* **Method:** `POST /editor/payout-accounts`
+* **Description:** Creates/reuses a RazorpayX Contact (`POST /v1/contacts`), creates a Fund Account (`POST /v1/fund_accounts`), stores `pending_verification` in `editor_payout_accounts`, and automatically runs penny-drop validation ONLY when `RAZORPAYX_AUTO_VALIDATE=true` (falling back cleanly to `pending_verification` if validation API/IP allowlisting is unavailable).
+* **Body (Bank Account):**
+  ```json
+  {
+    "account_type": "bank_account",
+    "account_holder_name": "Rohan Verma",
+    "account_number": "123456789012",
+    "ifsc": "HDFC0001234"
+  }
+  ```
+* **Body (UPI / VPA):**
+  ```json
+  {
+    "account_type": "vpa",
+    "vpa_address": "rohanverma@okhdfcbank"
+  }
+  ```
+* **Response (201):** Returns `{ "message": "...", "payout_account": { "id": "...", "razorpay_contact_id": "cont_...", "razorpay_fund_account_id": "fa_...", "account_type": "bank_account", "account_status": "pending_verification", "account_label": "****9012 (HDFC0001234)" } }`.
+
+---
+
+### 11.3 List Editor Payout Accounts
+* **Method:** `GET /editor/payout-accounts`
+
+---
+
+### 11.4 Manually Validate Payout Account (Penny-Drop / VPA Validation)
+* **Method:** `POST /editor/payout-accounts/:id/validate`
+* **Description:** Calls RazorpayX Fund Account Validation (`POST /v1/fund_accounts/validations`). Prevents duplicate concurrent requests (`409`). Marks `verified` ONLY when RazorpayX confirms `status: 'completed'` and `results.account_status: 'active'`.
+
+---
+
+### 11.5 Withdraw Available Balance via RazorpayX Payouts
+* **Method:** `POST /payouts/withdraw`
+* **Body:**
+  ```json
+  {
+    "amount": 500,
+    "payout_account_id": "optional-verified-payout-account-uuid",
+    "mode": "IMPS"
+  }
+  ```
+  *(Modes: `IMPS`, `NEFT`, `RTGS` for bank accounts; `UPI` for VPA. Requires verified payout account and `amount >= MIN_WITHDRAWAL_AMOUNT`.)*
+* **Description:** Acquires a transactional wallet lock (`FOR UPDATE`), checks `available_balance`, reserves funds in `payouts`, and calls RazorpayX `POST /v1/payouts` with `X-Payout-Idempotency`. Definitive failures/reversals release reserved balance automatically.
+
+---
+
+### 11.6 List My Withdrawal Payouts
+* **Method:** `GET /payouts`
+* **Response (200):** Returns `{ "wallet": { ... }, "payouts": [ ... ] }`.
+
+---
+
+### 11.7 Sync Payout Status from RazorpayX
+* **Method:** `POST /payouts/:id/sync`
+* **Description:** Fetches `GET /v1/payouts/:razorpay_payout_id` and updates `status`, `utr`, `failure_reason`, and `completed_at` idempotently.
+
+---
+
+## 12. Client–Editor Messaging APIs
+
+Prefix: `{{BASE_URL}}/conversations`
+Requires: `Authorization: Bearer {{TOKEN}}`
+
+### 12.1 Start or Get Conversation
+* **Method:** `POST /conversations`
+* **Body:** `{ "editor_id": "editor-profile-uuid", "order_id": "optional-order-uuid" }` (or `{ "client_id": "user-uuid" }` when called by an editor, or `{ "order_id": "order-uuid" }`).
+
+---
+
+### 12.2 List My Conversations
+* **Method:** `GET /conversations`
+
+---
+
+### 12.3 Get Conversation Messages
+* **Method:** `GET /conversations/:id/messages`
+* **Query Params:** `page=1&limit=50`
+
+---
+
+### 12.4 Send Text or Cloudinary Media Message
+* **Method:** `POST /conversations/:id/messages`
+* **Body:**
+  ```json
+  {
+    "message_text": "Check this reference cut",
+    "media_file_id": "optional-media-file-uuid",
+    "media_url": "https://res.cloudinary.com/.../video/upload/.../clip.mp4"
+  }
+  ```
+
+---
+
+## 13. Database Query Viewer APIs
 
 Prefix: `http://localhost:5000/api`
 
-### 9.1 List All Tables
+### 13.1 List All Tables
 * **Method:** `GET /api/tables`
 * **Access:** Public (Used by Viewer Sidebar)
 * **Response (200):**
@@ -927,6 +1187,8 @@ Prefix: `http://localhost:5000/api`
       "categories",
       "conversations",
       "editor_categories",
+      "editor_earnings",
+      "editor_payout_accounts",
       "editor_profiles",
       "media_files",
       "messages",
@@ -934,6 +1196,7 @@ Prefix: `http://localhost:5000/api`
       "order_status_history",
       "orders",
       "payments",
+      "payouts",
       "portfolio_items",
       "reviews",
       "users"
@@ -943,7 +1206,7 @@ Prefix: `http://localhost:5000/api`
 
 ---
 
-### 9.2 Execute SQL Query
+### 13.2 Execute SQL Query
 * **Method:** `POST /api/query`
 * **Access:** Public (Used by Viewer Editor)
 * **Body:**

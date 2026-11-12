@@ -1,4 +1,8 @@
 function errorHandler(err, req, res, next) {
+  if (err.code === "LIMIT_FILE_SIZE") {
+    return res.status(413).json({ error: "Uploaded file exceeds 100MB limit" });
+  }
+
   const statusCode = err.statusCode || err.status || 500;
   const message = err.message || "An unexpected error occurred on the server";
 

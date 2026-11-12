@@ -84,8 +84,14 @@ async function getDatabaseContext(connectionString) {
   return context;
 }
 
-// Middlewares
-app.use(express.json());
+// Middlewares (capture rawBody for Razorpay webhook signature verification)
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 app.use(cookieParser());
 app.use(express.static(path.join(__dirname, "public")));
 
@@ -256,6 +262,10 @@ app.use("/api/v1/categories", require("./routes/categoryRoutes"));
 app.use("/api/v1/editors", require("./routes/editorsRoutes"));
 app.use("/api/v1/editor", require("./routes/editorRoutes"));
 app.use("/api/v1/uploads", require("./routes/uploadRoutes"));
+app.use("/api/v1/orders", require("./routes/orderRoutes"));
+app.use("/api/v1/payments", require("./routes/paymentRoutes"));
+app.use("/api/v1/payouts", require("./routes/payoutRoutes"));
+app.use("/api/v1/conversations", require("./routes/chatRoutes"));
 
 // 404 & Centralized Error Handlers
 app.use(notFoundHandler);

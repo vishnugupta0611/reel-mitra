@@ -2,7 +2,7 @@ const db = require("../config/db");
 
 const OrderModel = {
   /**
-   * Create a new project request / order
+   * Create a new project request / order with pre-calculated commission & split
    */
   async create({
     clientId,
@@ -11,7 +11,10 @@ const OrderModel = {
     title,
     brief,
     requestedDeadline,
-    budget = null,
+    amount,
+    commissionPercent = 20.0,
+    platformFee,
+    editorAmount,
     currency = "INR",
     revisionLimit = 0,
   }) {
@@ -19,12 +22,13 @@ const OrderModel = {
     try {
       await client.query("BEGIN");
 
-      // 1. Insert Order
       const orderQuery = `
         INSERT INTO orders (
           client_id, editor_id, category_id, title, brief,
-          requested_deadline, budget, currency, revision_limit, status
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_editor_review')
+          requested_deadline, budget, agreed_price, amount,
+          commission_percent, platform_fee, editor_amount,
+          currency, revision_limit, status
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $7, $7, $8, $9, $10, $11, $12, 'pending')
         RETURNING *;
       `;
       const orderValues = [
@@ -34,18 +38,20 @@ const OrderModel = {
         title,
         brief,
         requestedDeadline,
-        budget,
+        amount,
+        commissionPercent,
+        platformFee,
+        editorAmount,
         currency,
         revisionLimit,
       ];
       const { rows: orderRows } = await client.query(orderQuery, orderValues);
       const newOrder = orderRows[0];
 
-      // 2. Insert initial timeline entry into order_status_history
       const historyQuery = `
         INSERT INTO order_status_history (
           order_id, changed_by, old_status, new_status, note
-        ) VALUES ($1, $2, NULL, 'pending_editor_review', 'Order created by client and submitted to editor.');
+        ) VALUES ($1, $2, NULL, 'pending', 'Order created by client and submitted to editor.');
       `;
       await client.query(historyQuery, [newOrder.id, clientId]);
 
@@ -69,6 +75,7 @@ const OrderModel = {
         c.first_name AS client_first_name,
         c.last_name AS client_last_name,
         c.email AS client_email,
+        ep.user_id AS editor_user_id,
         ep.display_name AS editor_name,
         cat.name AS category_name
       FROM orders o
@@ -82,9 +89,16 @@ const OrderModel = {
   },
 
   /**
-   * Find orders for a user (as client or editor)
+   * Find orders for a user (as client or editor), optionally filtered by status
    */
-  async findByUser(userId, role) {
+  async findByUser(userId, role, status = null) {
+    const params = [userId];
+    let statusFilter = "";
+    if (status) {
+      statusFilter = " AND o.status = $2";
+      params.push(status);
+    }
+
     let query = "";
     if (role === "editor") {
       query = `
@@ -93,21 +107,21 @@ const OrderModel = {
         JOIN users c ON o.client_id = c.id
         JOIN categories cat ON o.category_id = cat.id
         JOIN editor_profiles ep ON o.editor_id = ep.id
-        WHERE ep.user_id = $1
+        WHERE ep.user_id = $1${statusFilter}
         ORDER BY o.created_at DESC;
       `;
     } else {
-      // client
       query = `
         SELECT o.*, ep.display_name AS editor_name, cat.name AS category_name
         FROM orders o
         JOIN editor_profiles ep ON o.editor_id = ep.id
         JOIN categories cat ON o.category_id = cat.id
-        WHERE o.client_id = $1
+        WHERE o.client_id = $1${statusFilter}
         ORDER BY o.created_at DESC;
       `;
     }
-    const { rows } = await db.query(query, [userId]);
+
+    const { rows } = await db.query(query, params);
     return rows;
   },
 
@@ -119,7 +133,6 @@ const OrderModel = {
     try {
       await client.query("BEGIN");
 
-      // Check current status
       const { rows: current } = await client.query(
         "SELECT status FROM orders WHERE id = $1 FOR UPDATE",
         [orderId]
@@ -127,13 +140,14 @@ const OrderModel = {
       if (!current.length) throw new Error("Order not found");
       const oldStatus = current[0].status;
 
-      // Update orders table
       let updateSql = "UPDATE orders SET status = $1";
       const params = [newStatus];
       let pIdx = 2;
 
-      // Optionally set status timestamp (accepted_at, payment_confirmed_at, approved_at, completed_at, cancelled_at)
-      if (timestampCol && ["accepted_at", "payment_confirmed_at", "approved_at", "completed_at", "cancelled_at"].includes(timestampCol)) {
+      if (
+        timestampCol &&
+        ["accepted_at", "payment_confirmed_at", "approved_at", "completed_at", "cancelled_at"].includes(timestampCol)
+      ) {
         updateSql += `, ${timestampCol} = CURRENT_TIMESTAMP`;
       }
 
@@ -142,16 +156,105 @@ const OrderModel = {
 
       const { rows: updatedRows } = await client.query(updateSql, params);
 
-      // Record in order_status_history
-      const historySql = `
-        INSERT INTO order_status_history (
-          order_id, changed_by, old_status, new_status, note
-        ) VALUES ($1, $2, $3, $4, $5);
-      `;
-      await client.query(historySql, [orderId, changedBy, oldStatus, newStatus, note]);
+      await client.query(
+        `INSERT INTO order_status_history (order_id, changed_by, old_status, new_status, note)
+         VALUES ($1, $2, $3, $4, $5);`,
+        [orderId, changedBy, oldStatus, newStatus, note]
+      );
 
       await client.query("COMMIT");
       return updatedRows[0];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Request revision on preview_ready order (increments revisions_used)
+   */
+  async requestRevision({ orderId, changedBy, note }) {
+    const client = await db.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        "SELECT status, revision_limit, revisions_used FROM orders WHERE id = $1 FOR UPDATE",
+        [orderId]
+      );
+      if (!rows.length) throw new Error("Order not found");
+
+      const current = rows[0];
+      if (current.revision_limit > 0 && current.revisions_used >= current.revision_limit) {
+        const err = new Error("Revision limit reached for this order");
+        err.statusCode = 400;
+        throw err;
+      }
+
+      const { rows: updated } = await client.query(
+        `UPDATE orders
+         SET status = 'revision_requested', revisions_used = revisions_used + 1
+         WHERE id = $1
+         RETURNING *;`,
+        [orderId]
+      );
+
+      await client.query(
+        `INSERT INTO order_status_history (order_id, changed_by, old_status, new_status, note)
+         VALUES ($1, $2, $3, 'revision_requested', $4);`,
+        [orderId, changedBy, current.status, note || "Client requested a revision."]
+      );
+
+      await client.query("COMMIT");
+      return updated[0];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Mark order completed and unlock editor_earnings from pending -> available
+   */
+  async completeOrder({ orderId, changedBy, note }) {
+    const client = await db.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        "SELECT status FROM orders WHERE id = $1 FOR UPDATE",
+        [orderId]
+      );
+      if (!rows.length) throw new Error("Order not found");
+      const oldStatus = rows[0].status;
+
+      const { rows: updated } = await client.query(
+        `UPDATE orders
+         SET status = 'completed', approved_at = COALESCE(approved_at, CURRENT_TIMESTAMP), completed_at = CURRENT_TIMESTAMP
+         WHERE id = $1
+         RETURNING *;`,
+        [orderId]
+      );
+
+      await client.query(
+        `INSERT INTO order_status_history (order_id, changed_by, old_status, new_status, note)
+         VALUES ($1, $2, $3, 'completed', $4);`,
+        [orderId, changedBy, oldStatus, note || "Client approved deliverable and completed the order."]
+      );
+
+      await client.query(
+        `UPDATE editor_earnings
+         SET status = 'available'
+         WHERE order_id = $1 AND status = 'pending';`,
+        [orderId]
+      );
+
+      await client.query("COMMIT");
+      return updated[0];
     } catch (err) {
       await client.query("ROLLBACK");
       throw err;
@@ -177,7 +280,7 @@ const OrderModel = {
     `;
     const { rows } = await db.query(query, [orderId]);
     return rows;
-  }
+  },
 };
 
 module.exports = OrderModel;

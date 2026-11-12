@@ -9,6 +9,7 @@ const MediaModel = {
     orderId = null,
     fileName,
     storageKey,
+    fileUrl = null,
     mediaType,
     mimeType,
     sizeBytes,
@@ -17,9 +18,9 @@ const MediaModel = {
   }) {
     const query = `
       INSERT INTO media_files (
-        uploaded_by, order_id, file_name, storage_key,
+        uploaded_by, order_id, file_name, storage_key, file_url,
         media_type, mime_type, size_bytes, upload_status, visibility
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *;
     `;
     const values = [
@@ -27,6 +28,7 @@ const MediaModel = {
       orderId,
       fileName,
       storageKey,
+      fileUrl,
       mediaType,
       mimeType,
       sizeBytes,
@@ -47,16 +49,29 @@ const MediaModel = {
   },
 
   /**
-   * Update upload status (e.g. 'uploaded', 'failed')
+   * Update upload status and optional Cloudinary metadata
    */
-  async updateUploadStatus(id, uploadStatus) {
+  async updateUploadStatus(id, uploadStatus, { fileUrl = null, storageKey = null, sizeBytes = null } = {}) {
     const query = `
       UPDATE media_files
-      SET upload_status = $1
-      WHERE id = $2
+      SET
+        upload_status = $1,
+        file_url = COALESCE($2, file_url),
+        storage_key = COALESCE($3, storage_key),
+        size_bytes = COALESCE($4, size_bytes)
+      WHERE id = $5
       RETURNING *;
     `;
-    const { rows } = await db.query(query, [uploadStatus, id]);
+    const { rows } = await db.query(query, [uploadStatus, fileUrl, storageKey, sizeBytes, id]);
+    return rows[0] || null;
+  },
+
+  /**
+   * Delete media file record (with owner check)
+   */
+  async delete(id) {
+    const query = `DELETE FROM media_files WHERE id = $1 RETURNING *;`;
+    const { rows } = await db.query(query, [id]);
     return rows[0] || null;
   },
 
@@ -118,6 +133,7 @@ const MediaModel = {
         od.*,
         mf.file_name,
         mf.storage_key,
+        mf.file_url,
         mf.media_type,
         mf.mime_type,
         mf.size_bytes,

@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const EditorController = require("../controllers/editorController");
+const PayoutController = require("../controllers/payoutController");
 const { authenticate, requireRole } = require("../middlewares/authMiddleware");
 
 // All routes here require logged-in editor
@@ -12,6 +13,13 @@ router.get("/profile", EditorController.getMyProfile);
 router.patch("/profile", EditorController.updateMyProfile);
 router.get("/profile/completion", EditorController.getProfileCompletion);
 router.patch("/availability", EditorController.updateAvailability);
+
+// Earnings Ledger & Payout Accounts (RazorpayX)
+router.get("/earnings", PayoutController.getMyEarnings);
+router.get("/wallet", PayoutController.getMyEarnings);
+router.post("/payout-accounts", PayoutController.createPayoutAccount);
+router.get("/payout-accounts", PayoutController.listPayoutAccounts);
+router.post("/payout-accounts/:id/validate", PayoutController.validatePayoutAccount);
 
 // Categories
 router.get("/categories", EditorController.getMyCategories);

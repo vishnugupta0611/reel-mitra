@@ -5,7 +5,6 @@ const ChatModel = {
    * Find existing conversation between client & editor or create a new one
    */
   async findOrCreateConversation({ clientId, editorId, orderId = null }) {
-    // 1. Try finding existing conversation
     let findQuery = `
       SELECT * FROM conversations
       WHERE client_id = $1 AND editor_id = $2
@@ -20,63 +19,109 @@ const ChatModel = {
     }
 
     const { rows: existing } = await db.query(findQuery, findValues);
-    if (existing.length > 0) return existing[0];
+    if (existing.length > 0) {
+      return { conversation: existing[0], created: false };
+    }
 
-    // 2. Create if not found
     const insertQuery = `
       INSERT INTO conversations (client_id, editor_id, order_id)
       VALUES ($1, $2, $3)
       RETURNING *;
     `;
     const { rows: created } = await db.query(insertQuery, [clientId, editorId, orderId]);
-    return created[0];
+    return { conversation: created[0], created: true };
   },
 
   /**
-   * List conversations for a user
+   * Find conversation by ID with participant user IDs
+   */
+  async findConversationById(id) {
+    const query = `
+      SELECT
+        c.*,
+        u_client.first_name AS client_first_name,
+        u_client.last_name AS client_last_name,
+        u_client.avatar_url AS client_avatar,
+        ep.user_id AS editor_user_id,
+        ep.display_name AS editor_name
+      FROM conversations c
+      JOIN users u_client ON c.client_id = u_client.id
+      JOIN editor_profiles ep ON c.editor_id = ep.id
+      WHERE c.id = $1;
+    `;
+    const { rows } = await db.query(query, [id]);
+    return rows[0] || null;
+  },
+
+  /**
+   * List conversations for a user (as client or editor)
    */
   async findUserConversations(userId) {
     const query = `
       SELECT 
         c.*,
-        u_client.first_name AS client_name,
+        u_client.first_name AS client_first_name,
+        u_client.last_name AS client_last_name,
         u_client.avatar_url AS client_avatar,
+        ep.user_id AS editor_user_id,
         ep.display_name AS editor_name,
-        (
-          SELECT message_text 
-          FROM messages m 
-          WHERE m.conversation_id = c.id 
-          ORDER BY m.created_at DESC 
-          LIMIT 1
-        ) AS last_message,
-        (
-          SELECT created_at 
-          FROM messages m 
-          WHERE m.conversation_id = c.id 
-          ORDER BY m.created_at DESC 
-          LIMIT 1
-        ) AS last_message_at
+        lm.message_text AS last_message,
+        lm.message_type AS last_message_type,
+        lm.media_url AS last_media_url,
+        lm.created_at AS last_message_at
       FROM conversations c
       JOIN users u_client ON c.client_id = u_client.id
       JOIN editor_profiles ep ON c.editor_id = ep.id
+      LEFT JOIN LATERAL (
+        SELECT message_text, message_type, media_url, created_at
+        FROM messages m
+        WHERE m.conversation_id = c.id AND m.deleted_at IS NULL
+        ORDER BY m.created_at DESC
+        LIMIT 1
+      ) lm ON TRUE
       WHERE c.client_id = $1 OR ep.user_id = $1
-      ORDER BY last_message_at DESC NULLS LAST;
+      ORDER BY COALESCE(lm.created_at, c.updated_at, c.created_at) DESC;
     `;
     const { rows } = await db.query(query, [userId]);
     return rows;
   },
 
   /**
-   * Add message to conversation
+   * Add text or media message to conversation and touch conversation.updated_at
    */
-  async createMessage({ conversationId, senderId, messageText, messageType = "text" }) {
-    const query = `
-      INSERT INTO messages (conversation_id, sender_id, message_text, message_type)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *;
-    `;
-    const { rows } = await db.query(query, [conversationId, senderId, messageText, messageType]);
-    return rows[0];
+  async createMessage({
+    conversationId,
+    senderId,
+    messageText,
+    messageType = "text",
+    mediaUrl = null,
+    mediaFileId = null,
+  }) {
+    const client = await db.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        `INSERT INTO messages (
+           conversation_id, sender_id, message_text, message_type, media_url, media_file_id
+         ) VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING *;`,
+        [conversationId, senderId, messageText, messageType, mediaUrl, mediaFileId]
+      );
+
+      await client.query(
+        "UPDATE conversations SET updated_at = CURRENT_TIMESTAMP WHERE id = $1;",
+        [conversationId]
+      );
+
+      await client.query("COMMIT");
+      return rows[0];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   },
 
   /**
@@ -86,17 +131,19 @@ const ChatModel = {
     const query = `
       SELECT 
         m.*,
-        u.first_name AS sender_name,
+        u.first_name AS sender_first_name,
+        u.last_name AS sender_last_name,
+        u.avatar_url AS sender_avatar,
         u.role AS sender_role
       FROM messages m
       JOIN users u ON m.sender_id = u.id
-      WHERE m.conversation_id = $1
+      WHERE m.conversation_id = $1 AND m.deleted_at IS NULL
       ORDER BY m.created_at ASC
       LIMIT $2 OFFSET $3;
     `;
     const { rows } = await db.query(query, [conversationId, limit, offset]);
     return rows;
-  }
+  },
 };
 
 module.exports = ChatModel;

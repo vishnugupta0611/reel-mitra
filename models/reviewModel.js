@@ -42,16 +42,36 @@ const ReviewModel = {
   },
 
   /**
-   * Create a review
+   * Create a review and update editor rating stats atomically
    */
   async create({ orderId = null, reviewerId, editorId, rating, comment = null }) {
-    const query = `
-      INSERT INTO reviews (order_id, reviewer_id, editor_id, rating, comment)
-      VALUES ($1, $2, $3, $4, $5)
-      RETURNING *;
-    `;
-    const { rows } = await db.query(query, [orderId, reviewerId, editorId, rating, comment]);
-    return rows[0];
+    const client = await db.pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const { rows } = await client.query(
+        `INSERT INTO reviews (order_id, reviewer_id, editor_id, rating, comment)
+         VALUES ($1, $2, $3, $4, $5)
+         RETURNING *;`,
+        [orderId, reviewerId, editorId, rating, comment]
+      );
+
+      await client.query(
+        `UPDATE editor_profiles
+         SET average_rating = COALESCE((SELECT ROUND(AVG(rating)::numeric, 2) FROM reviews WHERE editor_id = $1), 0.00),
+             total_reviews = (SELECT COUNT(id)::int FROM reviews WHERE editor_id = $1)
+         WHERE id = $1;`,
+        [editorId]
+      );
+
+      await client.query("COMMIT");
+      return rows[0];
+    } catch (err) {
+      await client.query("ROLLBACK");
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 };
 

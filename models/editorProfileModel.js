@@ -195,7 +195,14 @@ const EditorProfileModel = {
       WHERE id = $6
       RETURNING *;
     `;
-    const { rows } = await db.query(query, [displayName, bio, experienceYears, pricingFrom, availabilityStatus, id]);
+    const { rows } = await db.query(query, [
+      displayName,
+      bio,
+      experienceYears,
+      pricingFrom,
+      availabilityStatus,
+      id,
+    ]);
     return rows[0] || null;
   }
 };
